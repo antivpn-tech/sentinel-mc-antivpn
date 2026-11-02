@@ -31,7 +31,6 @@ class VelocityPreLoginListener(private val plugin: SentinelVelocityPlugin) {
 
         // 1. Whitelist Check (Fastest Path - Bypasses edge API query)
         if (plugin.listManager.isWhitelisted(username, ip)) {
-            plugin.logger.info("[Sentinel] Whitelist: Allowed {} ({})", username, ip)
             return null
         }
 
@@ -51,7 +50,7 @@ class VelocityPreLoginListener(private val plugin: SentinelVelocityPlugin) {
                 .whenComplete { verdict, ex ->
                     try {
                         if (ex != null || verdict == null) {
-                            plugin.logger.error("[Sentinel] Velocity pre-login evaluation failure for {} ({}): {}", username, ip, ex?.message ?: "timeout")
+                            plugin.waveLogger.logEvaluationError(username, ip, ex?.message ?: "timeout")
                             return@whenComplete
                         }
 
@@ -87,7 +86,7 @@ class VelocityPreLoginListener(private val plugin: SentinelVelocityPlugin) {
                             }
                         }
                     } catch (e: Exception) {
-                        plugin.logger.error("[Sentinel] Velocity pre-login evaluation failure for {} ({}): {}", username, ip, e.message ?: e.javaClass.simpleName)
+                        plugin.waveLogger.logEvaluationError(username, ip, e.message ?: e.javaClass.simpleName)
                     } finally {
                         continuation.resume()
                     }

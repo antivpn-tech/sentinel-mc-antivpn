@@ -23,7 +23,6 @@ class BungeePreLoginListener(private val plugin: SentinelBungeePlugin) : Listene
 
         // 1. Whitelist Check (Fastest Path - Bypasses edge API query)
         if (plugin.listManager.isWhitelisted(playerName, ip)) {
-            plugin.logger.info("[Sentinel] Whitelist: Allowed $playerName ($ip)")
             return
         }
 
@@ -44,7 +43,7 @@ class BungeePreLoginListener(private val plugin: SentinelBungeePlugin) : Listene
             .whenComplete { verdict, ex ->
                 try {
                     if (ex != null || verdict == null) {
-                        plugin.logger.severe("[Sentinel] BungeeCord evaluation error for $playerName ($ip): ${ex?.message ?: "timeout"}")
+                        plugin.waveLogger.logEvaluationError(playerName, ip, ex?.message ?: "timeout")
                         return@whenComplete
                     }
                     val isThreat = verdict.isThreat(config.riskThreshold, config.allowGamingOptimizers)
@@ -81,7 +80,7 @@ class BungeePreLoginListener(private val plugin: SentinelBungeePlugin) : Listene
                         }
                     }
                 } catch (e: Exception) {
-                    plugin.logger.severe("[Sentinel] BungeeCord evaluation error for $playerName ($ip): ${e.message ?: e.javaClass.simpleName}")
+                    plugin.waveLogger.logEvaluationError(playerName, ip, e.message ?: e.javaClass.simpleName)
                 } finally {
                     event.completeIntent(plugin)
                 }

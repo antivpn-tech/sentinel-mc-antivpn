@@ -67,6 +67,17 @@ class SentinelClient(
 
     @Volatile
     private var backoffUntil: Long = 0
+    @Volatile
+    private var lastTransientErrorLogMs: Long = 0
+
+    private fun logTransientError(message: String) {
+        if (!config.consoleLogs) return
+        val now = System.currentTimeMillis()
+        if (now - lastTransientErrorLogMs >= 10_000L) {
+            lastTransientErrorLogMs = now
+            errorLogger(message)
+        }
+    }
 
     companion object {
         private const val MAX_BATCH_SIZE = 20
@@ -319,7 +330,7 @@ class SentinelClient(
             val request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
                 .timeout(Duration.ofMillis(requestTimeoutMs))
-                .header("User-Agent", "Sentinel-Minecraft/2.0.1")
+                .header("User-Agent", "Sentinel-Minecraft/2.0.3")
                 .header("Accept", "application/json")
                 .header("Authorization", "Bearer $cleanKey")
                 .header("X-Sentinel-Key", cleanKey)
@@ -338,24 +349,24 @@ class SentinelClient(
                     } else if (status == 429) {
                         val retryAfter = (response.headers().firstValue("Retry-After").orElse("5").toLongOrNull() ?: 5L).coerceIn(1L, 300L)
                         backoffUntil = System.currentTimeMillis() + (retryAfter * 1000)
-                        errorLogger("[Sentinel] ⚠️ Rate limit exceeded (HTTP 429). Backing off edge queries for ${retryAfter}s: ${response.body()}")
+                        logTransientError("[Sentinel] ⚠️ Rate limit exceeded (HTTP 429). Backing off edge queries for ${retryAfter}s.")
                         SentinelVerdict.fallbackAllow(normalizedIp)
                     } else if (status == 401 || status == 403) {
                         backoffUntil = System.currentTimeMillis() + 60_000L
-                        errorLogger("[Sentinel] 🚨 Edge API returned HTTP $status (Quota Depleted or Invalid Key): ${response.body()}. Backing off for 60s and failing open.")
+                        logTransientError("[Sentinel] 🚨 Edge API returned HTTP $status (Quota Depleted or Invalid Key): ${response.body()}. Backing off for 60s and failing open.")
                         SentinelVerdict.fallbackAllow(normalizedIp)
                     } else {
-                        errorLogger("[Sentinel] Edge API returned HTTP $status for $normalizedIp: ${response.body()}")
+                        logTransientError("[Sentinel] Edge API returned HTTP $status (failing open).")
                         SentinelVerdict.fallbackAllow(normalizedIp)
                     }
                 }
                 .orTimeout(requestTimeoutMs + 500L, TimeUnit.MILLISECONDS)
                 .exceptionally { ex ->
-                    errorLogger("[Sentinel] Connection failure communicating with Sentinel Edge API: ${ex.message} (failing open)")
+                    logTransientError("[Sentinel] Connection failure communicating with Sentinel Edge API: ${ex.message} (failing open)")
                     SentinelVerdict.fallbackAllow(normalizedIp)
                 }
         } catch (e: Exception) {
-            errorLogger("[Sentinel] Failed to construct evaluation request for $normalizedIp: ${e.message}")
+            logTransientError("[Sentinel] Failed to construct evaluation request: ${e.message}")
             CompletableFuture.completedFuture(SentinelVerdict.fallbackAllow(normalizedIp))
         }
     }
@@ -376,7 +387,7 @@ class SentinelClient(
             val request = HttpRequest.newBuilder()
                 .uri(URI.create(batchUrl))
                 .timeout(Duration.ofMillis(requestTimeoutMs))
-                .header("User-Agent", "Sentinel-Minecraft/2.0.1")
+                .header("User-Agent", "Sentinel-Minecraft/2.0.3")
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")
                 .header("Authorization", "Bearer $cleanKey")
@@ -396,24 +407,24 @@ class SentinelClient(
                     } else if (status == 429) {
                         val retryAfter = (response.headers().firstValue("Retry-After").orElse("5").toLongOrNull() ?: 5L).coerceIn(1L, 300L)
                         backoffUntil = System.currentTimeMillis() + (retryAfter * 1000)
-                        errorLogger("[Sentinel] ⚠️ Batch rate limit exceeded (HTTP 429). Backing off edge queries for ${retryAfter}s.")
+                        logTransientError("[Sentinel] ⚠️ Batch rate limit exceeded (HTTP 429). Backing off edge queries for ${retryAfter}s.")
                         chunk.associateWith { SentinelVerdict.fallbackAllow(it) }
                     } else if (status == 401 || status == 403) {
                         backoffUntil = System.currentTimeMillis() + 60_000L
-                        errorLogger("[Sentinel] 🚨 Edge API returned HTTP $status on batch check: ${response.body()}. Backing off for 60s and failing open.")
+                        logTransientError("[Sentinel] 🚨 Edge API returned HTTP $status on batch check: ${response.body()}. Backing off for 60s and failing open.")
                         chunk.associateWith { SentinelVerdict.fallbackAllow(it) }
                     } else {
-                        errorLogger("[Sentinel] Edge API returned HTTP $status for batch check (${chunk.size} IPs): ${response.body()}")
+                        logTransientError("[Sentinel] Edge API returned HTTP $status for batch check (${chunk.size} IPs).")
                         chunk.associateWith { SentinelVerdict.fallbackAllow(it) }
                     }
                 }
                 .orTimeout(requestTimeoutMs + 500L, TimeUnit.MILLISECONDS)
                 .exceptionally { ex ->
-                    errorLogger("[Sentinel] Batch connection failure communicating with Sentinel Edge API: ${ex.message} (failing open)")
+                    logTransientError("[Sentinel] Batch connection failure communicating with Sentinel Edge API: ${ex.message} (failing open)")
                     chunk.associateWith { SentinelVerdict.fallbackAllow(it) }
                 }
         } catch (e: Exception) {
-            errorLogger("[Sentinel] Failed to construct batch evaluation request: ${e.message}")
+            logTransientError("[Sentinel] Failed to construct batch evaluation request: ${e.message}")
             CompletableFuture.completedFuture(chunk.associateWith { SentinelVerdict.fallbackAllow(it) })
         }
     }

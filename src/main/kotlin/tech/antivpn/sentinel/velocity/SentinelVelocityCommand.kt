@@ -4,6 +4,7 @@ import com.velocitypowered.api.command.CommandSource
 import com.velocitypowered.api.command.SimpleCommand
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
+import tech.antivpn.sentinel.common.SentinelConfig
 import tech.antivpn.sentinel.common.SentinelListManager
 import java.util.Locale
 
@@ -35,6 +36,12 @@ class SentinelVelocityCommand(private val plugin: SentinelVelocityPlugin) : Simp
                     .append(Component.text("${config.riskThreshold} / 100", NamedTextColor.WHITE))
             )
             source.sendMessage(
+                Component.text("Console Logs: ", NamedTextColor.GRAY).append(
+                    if (config.consoleLogs) Component.text("ENABLED (Wave Summary)", NamedTextColor.GREEN)
+                    else Component.text("DISABLED (Silent)", NamedTextColor.RED)
+                )
+            )
+            source.sendMessage(
                 Component.text("Cached IPs: ", NamedTextColor.GRAY)
                     .append(Component.text("${plugin.sentinelClient.cacheSize}", NamedTextColor.WHITE))
             )
@@ -59,6 +66,21 @@ class SentinelVelocityCommand(private val plugin: SentinelVelocityPlugin) : Simp
         if (args[0].equals("reload", ignoreCase = true)) {
             plugin.loadConfiguration()
             source.sendMessage(Component.text("[Sentinel] Configuration and whitelist/blacklist reloaded.", NamedTextColor.GREEN))
+            return
+        }
+
+        if (args[0].equals("logs", ignoreCase = true) || args[0].equals("console", ignoreCase = true)) {
+            val nextState = SentinelConfig.parseConsoleLogsToggle(args.getOrNull(1), plugin.sentinelConfig.consoleLogs)
+            if (nextState == null) {
+                source.sendMessage(Component.text("Usage: /sentinel logs [on | off | toggle]", NamedTextColor.RED))
+                return
+            }
+            plugin.setConsoleLogs(nextState)
+            if (nextState) {
+                source.sendMessage(Component.text("[Sentinel] Console logs and wave summaries are now ENABLED.", NamedTextColor.GREEN))
+            } else {
+                source.sendMessage(Component.text("[Sentinel] Console logs are now DISABLED (silent mode).", NamedTextColor.YELLOW))
+            }
             return
         }
 
@@ -213,7 +235,7 @@ class SentinelVelocityCommand(private val plugin: SentinelVelocityPlugin) : Simp
             return
         }
 
-        source.sendMessage(Component.text("Usage: /sentinel [status | reload | check <ip|player> | whitelist | blacklist]", NamedTextColor.RED))
+        source.sendMessage(Component.text("Usage: /sentinel [status | reload | logs <on|off> | check <ip|player> | whitelist | blacklist]", NamedTextColor.RED))
     }
 
     override fun suggest(invocation: SimpleCommand.Invocation): List<String> {
@@ -224,12 +246,15 @@ class SentinelVelocityCommand(private val plugin: SentinelVelocityPlugin) : Simp
 
         if (args.isEmpty() || args.size == 1) {
             val prefix = if (args.isEmpty()) "" else args[0].lowercase(Locale.ROOT)
-            return listOf("status", "reload", "check", "whitelist", "blacklist")
+            return listOf("status", "reload", "logs", "check", "whitelist", "blacklist")
                 .filter { it.startsWith(prefix) }
         }
 
         if (args.size == 2) {
             val prefix = args[1].lowercase(Locale.ROOT)
+            if (args[0].equals("logs", ignoreCase = true) || args[0].equals("console", ignoreCase = true)) {
+                return listOf("on", "off", "toggle").filter { it.startsWith(prefix) }
+            }
             if (args[0].equals("check", ignoreCase = true)) {
                 return plugin.server.allPlayers.map { it.username }.filter { it.lowercase(Locale.ROOT).startsWith(prefix) }
             }

@@ -1,6 +1,7 @@
 package tech.antivpn.sentinel.bungee
 
 import net.md_5.bungee.api.plugin.Plugin
+import tech.antivpn.sentinel.common.ConsoleSpamFilter
 import tech.antivpn.sentinel.common.ConsoleWaveLogger
 import tech.antivpn.sentinel.common.DiscordWebhookNotifier
 import tech.antivpn.sentinel.common.SentinelClient
@@ -29,9 +30,11 @@ class SentinelBungeePlugin : Plugin() {
         infoLogger = { logger.info(it) },
         warnLogger = { logger.warning(it) }
     )
+    private var spamFilter: ConsoleSpamFilter? = null
 
     override fun onEnable() {
         loadConfiguration()
+        spamFilter = ConsoleSpamFilter.install(waveLogger, listOf(logger, proxy.logger))
 
         // Register PreLogin event listener
         proxy.pluginManager.registerListener(this, BungeePreLoginListener(this))
@@ -44,6 +47,7 @@ class SentinelBungeePlugin : Plugin() {
         logger.info(" Mode: ${sentinelConfig.mode} " + if (sentinelConfig.isAuditMode) "(AUDIT - PASSIVE MONITORING)" else "(ACTIVE ENFORCEMENT - BLOCKING VPNS)")
         logger.info(" Risk Threshold: ${sentinelConfig.riskThreshold} / 100")
         logger.info(" Graduated Defense: " + if (sentinelConfig.graduatedDefense) "ENABLED (Soft-alert suspect residential)" else "DISABLED")
+        logger.info(" Console Logs: " + if (sentinelConfig.consoleLogs) "ENABLED (5s Wave Summary)" else "DISABLED (Silent Mode)")
         logger.info(" Discord Alerts: " + if (sentinelConfig.isDiscordConfigured) "ENABLED (Rate-Limit Batcher)" else "DISABLED")
         logger.info("==================================================")
 
@@ -62,6 +66,8 @@ class SentinelBungeePlugin : Plugin() {
     }
 
     override fun onDisable() {
+        spamFilter?.uninstall()
+        spamFilter = null
         if (::sentinelClient.isInitialized) {
             sentinelClient.shutdown()
         }
@@ -70,6 +76,12 @@ class SentinelBungeePlugin : Plugin() {
         }
         waveLogger.shutdown()
         logger.info("[Sentinel] BungeeCord proxy shutdown: cache cleared.")
+    }
+
+    fun setConsoleLogs(enabled: Boolean) {
+        this.sentinelConfig = this.sentinelConfig.copy(consoleLogs = enabled)
+        this.waveLogger.consoleLogsEnabled = enabled
+        SentinelConfig.updateConsoleLogsInFile(dataFolder.toPath().resolve("config.yml"), enabled)
     }
 
     fun loadConfiguration() {
@@ -176,6 +188,7 @@ class SentinelBungeePlugin : Plugin() {
             val allowGaming = props["allow-gaming-optimizers"]?.toBooleanStrictOrNull() ?: true
             val graduatedDefense = props["graduated-defense"]?.toBooleanStrictOrNull() ?: true
             val cacheMinutes = (props["cache-duration-minutes"]?.toIntOrNull() ?: 30).coerceAtLeast(0)
+            val consoleLogs = (props["console-logs"] ?: props["logging.console"])?.toBooleanStrictOrNull() ?: true
             val discordEnabled = props["discord.enabled"]?.toBooleanStrictOrNull() ?: true
             val webhookUrl = props["discord.webhook-url"] ?: ""
             val notifyOnlyThreat = props["discord.notify-only-on-threat"]?.toBooleanStrictOrNull() ?: true
@@ -192,12 +205,14 @@ class SentinelBungeePlugin : Plugin() {
                 allowGamingOptimizers = allowGaming,
                 graduatedDefense = graduatedDefense,
                 cacheDurationMinutes = cacheMinutes,
+                consoleLogs = consoleLogs,
                 discordEnabled = discordEnabled,
                 discordWebhookUrl = webhookUrl,
                 discordNotifyOnlyOnThreat = notifyOnlyThreat,
                 discordServerName = serverName,
                 kickMessage = kickMessage
             )
+            this.waveLogger.consoleLogsEnabled = this.sentinelConfig.consoleLogs
 
             this.sentinelClient = SentinelClient(
                 this.sentinelConfig,

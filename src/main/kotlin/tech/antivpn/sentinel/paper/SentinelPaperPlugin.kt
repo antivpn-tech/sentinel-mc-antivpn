@@ -8,6 +8,7 @@ import org.bukkit.command.CommandSender
 import org.bukkit.command.TabCompleter
 import org.bukkit.entity.Player
 import org.bukkit.plugin.java.JavaPlugin
+import tech.antivpn.sentinel.common.ConsoleSpamFilter
 import tech.antivpn.sentinel.common.ConsoleWaveLogger
 import tech.antivpn.sentinel.common.DiscordWebhookNotifier
 import tech.antivpn.sentinel.common.SentinelClient
@@ -36,10 +37,12 @@ class SentinelPaperPlugin : JavaPlugin(), CommandExecutor, TabCompleter {
         infoLogger = { logger.info(it) },
         warnLogger = { logger.warning(it) }
     )
+    private var spamFilter: ConsoleSpamFilter? = null
 
     override fun onEnable() {
         saveDefaultConfig()
         loadConfiguration()
+        spamFilter = ConsoleSpamFilter.install(waveLogger, listOf(logger, server.logger))
 
         // Register pre-login event listener
         server.pluginManager.registerEvents(PaperPreLoginListener(this), this)
@@ -55,6 +58,7 @@ class SentinelPaperPlugin : JavaPlugin(), CommandExecutor, TabCompleter {
         logger.info(" Mode: ${sentinelConfig.mode} " + if (sentinelConfig.isAuditMode) "(AUDIT - PASSIVE MONITORING)" else "(ACTIVE ENFORCEMENT - BLOCKING VPNS)")
         logger.info(" Risk Threshold: ${sentinelConfig.riskThreshold} / 100")
         logger.info(" Graduated Defense: " + if (sentinelConfig.graduatedDefense) "ENABLED (Soft-alert suspect residential)" else "DISABLED")
+        logger.info(" Console Logs: " + if (sentinelConfig.consoleLogs) "ENABLED (5s Wave Summary)" else "DISABLED (Silent Mode)")
         logger.info(" Discord Alerts: " + if (sentinelConfig.isDiscordConfigured) "ENABLED (Rate-Limit Batcher)" else "DISABLED")
         logger.info("==================================================")
 
@@ -73,6 +77,8 @@ class SentinelPaperPlugin : JavaPlugin(), CommandExecutor, TabCompleter {
     }
 
     override fun onDisable() {
+        spamFilter?.uninstall()
+        spamFilter = null
         if (::sentinelClient.isInitialized) {
             sentinelClient.shutdown()
         }
@@ -83,12 +89,23 @@ class SentinelPaperPlugin : JavaPlugin(), CommandExecutor, TabCompleter {
         logger.info("[Sentinel] Disabled and cache purged.")
     }
 
+    fun setConsoleLogs(enabled: Boolean) {
+        this.sentinelConfig = this.sentinelConfig.copy(consoleLogs = enabled)
+        this.waveLogger.consoleLogsEnabled = enabled
+        SentinelConfig.updateConsoleLogsInFile(dataFolder.toPath().resolve("config.yml"), enabled)
+    }
+
     fun loadConfiguration() {
         val oldClient = if (::sentinelClient.isInitialized) sentinelClient else null
         val oldWebhook = if (::webhookNotifier.isInitialized) webhookNotifier else null
         try {
             reloadConfig()
             val c = config
+            val consoleLogs = if (c.contains("console-logs")) {
+                c.getBoolean("console-logs", true)
+            } else {
+                c.getBoolean("logging.console", true)
+            }
 
             this.sentinelConfig = SentinelConfig(
                 endpoint = c.getString("api.endpoint", "https://api.antivpn.tech/v1/check") ?: "https://api.antivpn.tech/v1/check",
@@ -99,6 +116,7 @@ class SentinelPaperPlugin : JavaPlugin(), CommandExecutor, TabCompleter {
                 allowGamingOptimizers = c.getBoolean("allow-gaming-optimizers", true),
                 graduatedDefense = c.getBoolean("graduated-defense", true),
                 cacheDurationMinutes = c.getInt("cache-duration-minutes", 30).coerceAtLeast(0),
+                consoleLogs = consoleLogs,
                 discordEnabled = c.getBoolean("discord.enabled", true),
                 discordWebhookUrl = c.getString("discord.webhook-url", "") ?: "",
                 discordNotifyOnlyOnThreat = c.getBoolean("discord.notify-only-on-threat", true),
@@ -112,6 +130,7 @@ class SentinelPaperPlugin : JavaPlugin(), CommandExecutor, TabCompleter {
                     ) ?: "&7VPN / Proxy traffic is restricted on this server.\n&8Threat: &f%threat% &7| &8Risk: &f%risk%/100\n&7Join our Discord (&fhttps://discord.gg/yourlink&7) to request VPN access."
                 }
             )
+            this.waveLogger.consoleLogsEnabled = this.sentinelConfig.consoleLogs
 
             this.sentinelClient = SentinelClient(
                 this.sentinelConfig,
@@ -163,6 +182,7 @@ class SentinelPaperPlugin : JavaPlugin(), CommandExecutor, TabCompleter {
             sender.sendMessage("${ChatColor.GOLD}${ChatColor.BOLD}Sentinel Anti-VPN Status")
             sender.sendMessage("${ChatColor.GRAY}Mode: " + if (sentinelConfig.isAuditMode) "${ChatColor.YELLOW}AUDIT (Dry-Run)" else "${ChatColor.RED}ENFORCE (Blocking)")
             sender.sendMessage("${ChatColor.GRAY}Risk Threshold: ${ChatColor.WHITE}${sentinelConfig.riskThreshold} / 100")
+            sender.sendMessage("${ChatColor.GRAY}Console Logs: " + if (sentinelConfig.consoleLogs) "${ChatColor.GREEN}ENABLED (Wave Summary)" else "${ChatColor.RED}DISABLED (Silent)")
             sender.sendMessage("${ChatColor.GRAY}Cached IPs: ${ChatColor.WHITE}${sentinelClient.cacheSize}")
             sender.sendMessage("${ChatColor.GRAY}Whitelisted: ${ChatColor.GREEN}${listManager.getWhitelistedPlayers().size} players, ${listManager.getWhitelistedIps().size} IPs")
             sender.sendMessage("${ChatColor.GRAY}Blacklisted: ${ChatColor.RED}${listManager.getBlacklistedPlayers().size} players, ${listManager.getBlacklistedIps().size} IPs")
@@ -174,6 +194,21 @@ class SentinelPaperPlugin : JavaPlugin(), CommandExecutor, TabCompleter {
         if (args[0].equals("reload", ignoreCase = true)) {
             loadConfiguration()
             sender.sendMessage("${ChatColor.GREEN}[Sentinel] Configuration and whitelist/blacklist reloaded.")
+            return true
+        }
+
+        if (args[0].equals("logs", ignoreCase = true) || args[0].equals("console", ignoreCase = true)) {
+            val nextState = SentinelConfig.parseConsoleLogsToggle(args.getOrNull(1), sentinelConfig.consoleLogs)
+            if (nextState == null) {
+                sender.sendMessage("${ChatColor.RED}Usage: /sentinel logs [on | off | toggle]")
+                return true
+            }
+            setConsoleLogs(nextState)
+            if (nextState) {
+                sender.sendMessage("${ChatColor.GREEN}[Sentinel] Console logs and wave summaries are now ENABLED.")
+            } else {
+                sender.sendMessage("${ChatColor.YELLOW}[Sentinel] Console logs are now DISABLED (silent mode).")
+            }
             return true
         }
 
@@ -319,7 +354,7 @@ class SentinelPaperPlugin : JavaPlugin(), CommandExecutor, TabCompleter {
             return true
         }
 
-        sender.sendMessage("${ChatColor.RED}Usage: /sentinel [status | reload | check <ip|player> | whitelist | blacklist]")
+        sender.sendMessage("${ChatColor.RED}Usage: /sentinel [status | reload | logs <on|off> | check <ip|player> | whitelist | blacklist]")
         return true
     }
 
@@ -329,11 +364,14 @@ class SentinelPaperPlugin : JavaPlugin(), CommandExecutor, TabCompleter {
         }
 
         if (args.size == 1) {
-            val sub = listOf("status", "reload", "check", "whitelist", "blacklist")
+            val sub = listOf("status", "reload", "logs", "check", "whitelist", "blacklist")
             return sub.filter { it.startsWith(args[0].lowercase(Locale.ROOT)) }
         }
 
         if (args.size == 2) {
+            if (args[0].equals("logs", ignoreCase = true) || args[0].equals("console", ignoreCase = true)) {
+                return listOf("on", "off", "toggle").filter { it.startsWith(args[1].lowercase(Locale.ROOT)) }
+            }
             if (args[0].equals("check", ignoreCase = true)) {
                 return Bukkit.getOnlinePlayers().map { it.name }.filter { it.lowercase(Locale.ROOT).startsWith(args[1].lowercase(Locale.ROOT)) }
             }

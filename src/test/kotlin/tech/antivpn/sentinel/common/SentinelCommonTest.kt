@@ -312,28 +312,124 @@ class SentinelCommonTest {
             warnLogger = { warnLogs.add(it) }
         )
         try {
-            val vpnVerdict = SentinelVerdict(ip = "198.51.100.1", action = "BLOCK", riskScore = 95, threatType = "Commercial VPN", isVpn = true)
-            val gradVerdict = SentinelVerdict(ip = "203.0.113.5", action = "ALLOW", riskScore = 70, confidence = 0.75, threatType = "Residential Tunnel")
+            val vpnVerdict = SentinelVerdict(
+                ip = "198.51.100.1",
+                action = "BLOCK",
+                riskScore = 95,
+                threatType = "Commercial VPN",
+                isVpn = true,
+                asn = 9009,
+                provider = "M247 Europe SRL",
+                country = "NL"
+            )
+            val gradVerdict = SentinelVerdict(
+                ip = "203.0.113.5",
+                action = "ALLOW",
+                riskScore = 70,
+                confidence = 0.75,
+                threatType = "Residential Tunnel",
+                country = "US"
+            )
 
             val t0 = 1_000_000L
-            // First 2 events in 2s window log individually
+            // All individual per-IP events must be swallowed into the wave summary (zero individual IP lines)
             waveLogger.logEnforceBlock("Bot1", "198.51.100.1", vpnVerdict, t0)
             waveLogger.logEnforceBlock("Bot2", "198.51.100.2", vpnVerdict, t0 + 100L)
-            assertEquals(2, warnLogs.size, "First 2 events in calm window must log individually")
-
-            // Events 3..6 within the same 2s window are aggregated
             waveLogger.logEnforceBlock("Bot3", "198.51.100.3", vpnVerdict, t0 + 200L)
             waveLogger.logEnforceBlock("Bot4", "198.51.100.4", vpnVerdict, t0 + 300L)
             waveLogger.logGraduatedDefense("Player5", "203.0.113.5", gradVerdict, t0 + 400L)
             waveLogger.logBlacklistBlock("BadActor6", "192.0.2.9", t0 + 500L)
-            assertEquals(2, warnLogs.size, "Flood events must be suppressed until summary flush")
+            waveLogger.logEvaluationError("BotErr", "198.51.100.77", "Timeout", t0 + 600L)
 
-            waveLogger.flushSummary()
-            assertEquals(3, warnLogs.size, "Summary flush must emit exactly 1 aggregated warning line")
+            assertEquals(0, warnLogs.size, "Individual IP logs must be 100% swallowed until summary flush")
+            assertEquals(0, infoLogs.size, "No individual info logs should be emitted during wave")
+
+            waveLogger.flushSummaryAt(t0 + 5_000L)
+            assertEquals(1, warnLogs.size, "Summary flush must emit exactly 1 aggregated warning line")
             val summary = warnLogs.last()
-            assertTrue(summary.contains("Threat Wave Summary (5s): 4 connections intercepted"))
-            assertTrue(summary.contains("3 blocked, 1 graduated defense"))
-            assertTrue(summary.contains("Commercial VPN: 2"))
+            assertTrue(summary.contains("Threat Wave Summary (5s): 6 connections intercepted (5 blocked, 1 graduated defense, 1 eval errors)"))
+            assertTrue(summary.contains("Rate: 1.2/s | Unique IPs: 6"))
+            assertTrue(summary.contains("Risk: avg 91/100 (peak 100)"))
+            assertTrue(summary.contains("Threats: Commercial VPN: 4, Residential Tunnel: 1, Blacklist: 1"))
+            assertTrue(summary.contains("Providers: AS9009 M247 Europe: 4"))
+            assertTrue(summary.contains("Origins: NL: 4, US: 1"))
+            assertTrue(summary.contains("Swallowed: 7 logs"))
+        } finally {
+            waveLogger.shutdown()
+        }
+    }
+
+    @Test
+    fun testConsoleLogsToggleAndSuppression(@TempDir tempDir: Path) {
+        val infoLogs = mutableListOf<String>()
+        val warnLogs = mutableListOf<String>()
+        val waveLogger = ConsoleWaveLogger(
+            infoLogger = { infoLogs.add(it) },
+            warnLogger = { warnLogs.add(it) },
+            consoleLogsEnabled = false
+        )
+        try {
+            val vpnVerdict = SentinelVerdict(
+                ip = "198.51.100.10",
+                action = "BLOCK",
+                riskScore = 95,
+                threatType = "Commercial VPN",
+                isVpn = true
+            )
+            waveLogger.logEnforceBlock("BotSilent", "198.51.100.10", vpnVerdict, 1_000_000L)
+            waveLogger.flushSummaryAt(1_005_000L)
+            assertEquals(0, warnLogs.size, "When consoleLogsEnabled is false, no summary logs should be emitted")
+
+            // Native server disconnect log for the blocked IP must STILL be suppressed even when console logs are off
+            assertTrue(
+                waveLogger.shouldSuppressServerLog(
+                    "com.velocitypowered.proxy.connection.MinecraftConnection",
+                    "[initial connection] /198.51.100.10:54321 has disconnected",
+                    1_001_000L
+                ),
+                "Blocked IP native disconnect spam must be swallowed"
+            )
+            // Legacy Paper hex-formatted kick message must be stripped and suppressed
+            assertTrue(
+                waveLogger.shouldSuppressServerLog(
+                    "net.minecraft.server.network.ServerLoginPacketListenerImpl",
+                    "Disconnecting BotSilent (/203.0.113.99:41222): §x§2§2§d§3§e§e§lS§x§2§0§c§9§e§a§le§x§1§e§b§f§e§6§ln§x§1§c§b§5§e§2§lt§x§1§a§a§b§d§e§li§x§1§8§a§1§d§a§ln§x§1§6§9§7§d§6§le§x§1§4§8§d§d§2§ll §x§1§2§8§3§c§e§lP§x§1§0§7§9§c§a§lr§x§0§e§6§f§c§6§lo§x§0§c§6§5§c§2§lt§x§0§a§5§b§b§e§le§x§0§8§5§1§b§a§lc§x§0§6§4§7§b§6§lt§x§0§4§3§d§b§2§li§x§0§2§3§3§a§e§lo§x§0§2§8§4§c§7§ln",
+                    1_001_000L
+                ),
+                "Paper/Bungee hex-formatted Sentinel Protection kick log must be swallowed"
+            )
+            // Normal unrelated server chat or startup logs must NOT be suppressed
+            assertFalse(
+                waveLogger.shouldSuppressServerLog(
+                    "net.minecraft.server.MinecraftServer",
+                    "[Server thread/INFO]: Done (3.412s)! For help, type \"help\"",
+                    1_001_000L
+                ),
+                "Normal server startup logs must never be suppressed"
+            )
+
+            // Re-enable console logs and verify summaries emit again
+            waveLogger.consoleLogsEnabled = true
+            waveLogger.logEnforceBlock("BotLoud", "198.51.100.11", vpnVerdict, 2_000_000L)
+            waveLogger.flushSummaryAt(2_005_000L)
+            assertEquals(1, warnLogs.size, "When consoleLogsEnabled is re-enabled, summary must emit")
+
+            // Verify config toggle parsing & file persistence
+            assertEquals(false, SentinelConfig.parseConsoleLogsToggle("off", true))
+            assertEquals(true, SentinelConfig.parseConsoleLogsToggle("on", false))
+            assertEquals(false, SentinelConfig.parseConsoleLogsToggle("toggle", true))
+            assertEquals(true, SentinelConfig.parseConsoleLogsToggle(null, false))
+            assertNull(SentinelConfig.parseConsoleLogsToggle("invalid", true))
+
+            val cfgFile = tempDir.resolve("config.yml")
+            java.nio.file.Files.writeString(
+                cfgFile,
+                "# Header comment\nmode: \"ENFORCE\"\nconsole-logs: true\n"
+            )
+            SentinelConfig.updateConsoleLogsInFile(cfgFile, false)
+            val updatedText = java.nio.file.Files.readString(cfgFile)
+            assertTrue(updatedText.contains("console-logs: false"))
+            assertTrue(updatedText.contains("# Header comment"))
         } finally {
             waveLogger.shutdown()
         }

@@ -1,5 +1,9 @@
 package tech.antivpn.sentinel.common
 
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.Path
+
 /**
  * Immutable configuration options for the Sentinel protection engine.
  */
@@ -12,6 +16,7 @@ data class SentinelConfig(
     val allowGamingOptimizers: Boolean = true,
     val graduatedDefense: Boolean = true,
     val cacheDurationMinutes: Int = 30,
+    val consoleLogs: Boolean = true,
     val discordEnabled: Boolean = true,
     val discordWebhookUrl: String = "",
     val discordNotifyOnlyOnThreat: Boolean = true,
@@ -37,6 +42,44 @@ data class SentinelConfig(
 
         @JvmStatic
         fun createDefault(): SentinelConfig = SentinelConfig()
+
+        /**
+         * Resolves the desired console log boolean state from a command argument
+         * ("on", "off", "toggle", or omitted). Returns null if the argument is unrecognized.
+         */
+        @JvmStatic
+        fun parseConsoleLogsToggle(arg: String?, current: Boolean): Boolean? {
+            if (arg.isNullOrBlank()) return !current
+            return when (arg.trim().lowercase()) {
+                "on", "enable", "enabled", "true" -> true
+                "off", "disable", "disabled", "false" -> false
+                "toggle" -> !current
+                else -> null
+            }
+        }
+
+        /**
+         * Updates `console-logs: <true|false>` in config.yml on disk while preserving
+         * all existing comments and formatting.
+         */
+        @JvmStatic
+        fun updateConsoleLogsInFile(configPath: Path, enabled: Boolean) {
+            try {
+                if (!Files.exists(configPath)) return
+                val content = Files.readString(configPath, StandardCharsets.UTF_8)
+                val lineRegex = Regex("""(?m)^(\s*console-logs\s*:\s*)(?:true|false)(.*)$""")
+                val updated = if (lineRegex.containsMatchIn(content)) {
+                    lineRegex.replace(content) { match ->
+                        "${match.groupValues[1]}$enabled${match.groupValues[2]}"
+                    }
+                } else {
+                    val suffix = if (content.endsWith("\n")) "" else "\n"
+                    "$content$suffix\n# Console Logging & Wave Summary (Toggle via /sentinel logs <on|off>)\nconsole-logs: $enabled\n"
+                }
+                Files.writeString(configPath, updated, StandardCharsets.UTF_8)
+            } catch (_: Exception) {
+            }
+        }
 
         /**
          * Converts shorthand &#RRGGBB hex codes into universal &x&R&R&G&G&B&B format.

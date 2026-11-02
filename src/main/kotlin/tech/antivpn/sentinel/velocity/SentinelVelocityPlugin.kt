@@ -9,6 +9,7 @@ import com.velocitypowered.api.plugin.Plugin
 import com.velocitypowered.api.plugin.annotation.DataDirectory
 import com.velocitypowered.api.proxy.ProxyServer
 import org.slf4j.Logger
+import tech.antivpn.sentinel.common.ConsoleSpamFilter
 import tech.antivpn.sentinel.common.ConsoleWaveLogger
 import tech.antivpn.sentinel.common.DiscordWebhookNotifier
 import tech.antivpn.sentinel.common.SentinelClient
@@ -24,7 +25,7 @@ import java.nio.file.Path
 @Plugin(
     id = "sentinel",
     name = "Sentinel",
-    version = "2.0.1",
+    version = "2.0.3",
     description = "Enterprise Anti-VPN and Proxy Evasion Protection for Velocity.",
     authors = ["Sentinel"]
 )
@@ -49,10 +50,12 @@ class SentinelVelocityPlugin @Inject constructor(
         infoLogger = { logger.info(it) },
         warnLogger = { logger.warn(it) }
     )
+    private var spamFilter: ConsoleSpamFilter? = null
 
     @Subscribe
     fun onProxyInitialization(event: ProxyInitializeEvent) {
         loadConfiguration()
+        spamFilter = ConsoleSpamFilter.install(waveLogger)
 
         // Register async event listener
         server.eventManager.register(this, VelocityPreLoginListener(this))
@@ -66,10 +69,11 @@ class SentinelVelocityPlugin @Inject constructor(
         commandManager.register(meta, SentinelVelocityCommand(this))
 
         logger.info("==================================================")
-        logger.info(" Sentinel Anti-VPN Connector v2.0.1 (Velocity)")
+        logger.info(" Sentinel Anti-VPN Connector v2.0.3 (Velocity)")
         logger.info(" Mode: {} {}", sentinelConfig.mode, if (sentinelConfig.isAuditMode) "(AUDIT - PASSIVE MONITORING)" else "(ACTIVE ENFORCEMENT - BLOCKING VPNS)")
         logger.info(" Risk Threshold: {} / 100", sentinelConfig.riskThreshold)
         logger.info(" Graduated Defense: {}", if (sentinelConfig.graduatedDefense) "ENABLED (Soft-alert suspect residential)" else "DISABLED")
+        logger.info(" Console Logs: {}", if (sentinelConfig.consoleLogs) "ENABLED (5s Wave Summary)" else "DISABLED (Silent Mode)")
         logger.info(" Discord Alerts: {}", if (sentinelConfig.isDiscordConfigured) "ENABLED (Rate-Limit Batcher)" else "DISABLED")
         logger.info("==================================================")
 
@@ -89,6 +93,8 @@ class SentinelVelocityPlugin @Inject constructor(
 
     @Subscribe
     fun onProxyShutdown(event: ProxyShutdownEvent) {
+        spamFilter?.uninstall()
+        spamFilter = null
         if (::sentinelClient.isInitialized) {
             sentinelClient.shutdown()
         }
@@ -97,6 +103,12 @@ class SentinelVelocityPlugin @Inject constructor(
         }
         waveLogger.shutdown()
         logger.info("[Sentinel] Velocity proxy shutdown: cache cleared.")
+    }
+
+    fun setConsoleLogs(enabled: Boolean) {
+        this.sentinelConfig = this.sentinelConfig.copy(consoleLogs = enabled)
+        this.waveLogger.consoleLogsEnabled = enabled
+        SentinelConfig.updateConsoleLogsInFile(dataDirectory.resolve("config.yml"), enabled)
     }
 
     fun loadConfiguration() {
@@ -203,6 +215,7 @@ class SentinelVelocityPlugin @Inject constructor(
             val allowGaming = props["allow-gaming-optimizers"]?.toBooleanStrictOrNull() ?: true
             val graduatedDefense = props["graduated-defense"]?.toBooleanStrictOrNull() ?: true
             val cacheMinutes = (props["cache-duration-minutes"]?.toIntOrNull() ?: 30).coerceAtLeast(0)
+            val consoleLogs = (props["console-logs"] ?: props["logging.console"])?.toBooleanStrictOrNull() ?: true
             val discordEnabled = props["discord.enabled"]?.toBooleanStrictOrNull() ?: true
             val webhookUrl = props["discord.webhook-url"] ?: ""
             val notifyOnlyThreat = props["discord.notify-only-on-threat"]?.toBooleanStrictOrNull() ?: true
@@ -219,12 +232,14 @@ class SentinelVelocityPlugin @Inject constructor(
                 allowGamingOptimizers = allowGaming,
                 graduatedDefense = graduatedDefense,
                 cacheDurationMinutes = cacheMinutes,
+                consoleLogs = consoleLogs,
                 discordEnabled = discordEnabled,
                 discordWebhookUrl = webhookUrl,
                 discordNotifyOnlyOnThreat = notifyOnlyThreat,
                 discordServerName = serverName,
                 kickMessage = kickMessage
             )
+            this.waveLogger.consoleLogsEnabled = this.sentinelConfig.consoleLogs
 
             this.sentinelClient = SentinelClient(
                 this.sentinelConfig,

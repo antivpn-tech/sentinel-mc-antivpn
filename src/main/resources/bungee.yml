@@ -1,5 +1,5 @@
 name: Sentinel
-version: 2.0.1
+version: 2.0.3
 main: tech.antivpn.sentinel.bungee.SentinelBungeePlugin
 author: Sentinel
 description: Enterprise Anti-VPN and Proxy Evasion Protection for BungeeCord / Waterfall.

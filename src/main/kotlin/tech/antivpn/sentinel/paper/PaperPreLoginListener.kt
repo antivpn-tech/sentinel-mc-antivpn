@@ -21,7 +21,6 @@ class PaperPreLoginListener(private val plugin: SentinelPaperPlugin) : Listener 
 
         // 1. Whitelist Check (Fastest Path - Bypasses edge API query)
         if (plugin.listManager.isWhitelisted(playerName, ip)) {
-            plugin.logger.info("[Sentinel] Whitelist: Allowed $playerName ($ip)")
             return
         }
 
@@ -73,7 +72,7 @@ class PaperPreLoginListener(private val plugin: SentinelPaperPlugin) : Listener 
                 }
             }
         } catch (e: Exception) {
-            plugin.logger.severe("[Sentinel] Unexpected error evaluating $playerName ($ip): ${e.message ?: e.javaClass.simpleName}")
+            plugin.waveLogger.logEvaluationError(playerName, ip, e.message ?: e.javaClass.simpleName)
         }
     }
 }

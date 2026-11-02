@@ -46,6 +46,12 @@ graduated-defense: true
 # Prevents redundant API queries when players reconnect or hop between proxy subservers.
 cache-duration-minutes: 30
 
+# Console Logging & Wave Summary (Default: true)
+# When true, individual IP block/disconnect spam is swallowed and aggregated into a
+# 5-second wave summary in the server console.
+# Set to false (or run '/sentinel logs off') to silence Sentinel console output completely.
+console-logs: true
+
 # ------------------------------------------------------------------------------
 # Discord Webhook Telemetry
 # Dispatches real-time security alerts directly to your Discord staff channel.

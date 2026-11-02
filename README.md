@@ -52,11 +52,11 @@ To connect to the Sentinel intelligence network:
 
 ## Installation
 
-1. Download `Sentinel-Minecraft-2.0.1.jar` from the [Releases](https://github.com/antivpn-tech/sentinel-mc-antivpn/releases) page.
+1. Download `Sentinel-Minecraft-2.0.3.jar` from the [Releases](https://github.com/antivpn-tech/sentinel-mc-antivpn/releases) page.
 2. Place the JAR into your server's `plugins/` directory:
-   - Velocity: `/plugins/Sentinel-Minecraft-2.0.1.jar`
-   - BungeeCord / Waterfall: `/plugins/Sentinel-Minecraft-2.0.1.jar`
-   - Paper / Purpur / Spigot: `/plugins/Sentinel-Minecraft-2.0.1.jar`
+   - Velocity: `/plugins/Sentinel-Minecraft-2.0.3.jar`
+   - BungeeCord / Waterfall: `/plugins/Sentinel-Minecraft-2.0.3.jar`
+   - Paper / Purpur / Spigot: `/plugins/Sentinel-Minecraft-2.0.3.jar`
 3. Start the server to generate default configurations.
 4. Configure your license key in `plugins/Sentinel/config.yml` (or `plugins/sentinel/config.yml` on Velocity).
 5. Execute `/sentinel reload` to apply settings.
@@ -101,6 +101,11 @@ graduated-defense: true
 # In-memory IP cache duration in minutes
 cache-duration-minutes: 30
 
+# Console Logging & Wave Summary
+# When true, connection waves are swallowed into a 5-second console summary.
+# Toggle in-game or via console at any time with: /sentinel logs <on|off|toggle>
+console-logs: true
+
 # ------------------------------------------------------------------------------
 # Discord Webhook Telemetry
 # ------------------------------------------------------------------------------
@@ -130,7 +135,8 @@ Administrative commands require the `sentinel.admin` permission (granted to serv
 
 | Command | Description |
 | :--- | :--- |
-| `/sentinel status` | Displays active protection mode, cache volume, list counts, and webhook state. |
+| `/sentinel status` | Displays active protection mode, cache volume, list counts, console log state, and webhook state. |
+| `/sentinel logs [on\|off\|toggle]` | Toggles Sentinel console wave summaries on or off and persists `console-logs` in `config.yml`. |
 | `/sentinel reload` | Reloads `config.yml`, `whitelist.json`, and `blacklist.json`. |
 | `/sentinel check <ip\|player>` | Queries live intelligence for an online player or target IP address. |
 | `/sentinel whitelist list` | Lists all whitelisted usernames, IP addresses, and CIDR subnets. |
@@ -154,7 +160,7 @@ cd sentinel-mc-antivpn
 mvn clean package
 ```
 
-The compiled universal JAR will be produced at `target/Sentinel-Minecraft-2.0.1.jar`.
+The compiled universal JAR will be produced at `target/Sentinel-Minecraft-2.0.3.jar`.
 
 ---
 
